@@ -77,7 +77,10 @@ function Headers(headers) {
     headers.forEach(function(value, name) {
       this.append(name, value)
     }, this)
-
+  } else if (Array.isArray(headers)) {
+    headers.forEach(function(header) {
+      this.append(header[0], header[1])
+    }, this)
   } else if (headers) {
     Object.getOwnPropertyNames(headers).forEach(function(name) {
       this.append(name, headers[name])
@@ -88,12 +91,8 @@ function Headers(headers) {
 Headers.prototype.append = function(name, value) {
   name = normalizeName(name)
   value = normalizeValue(value)
-  var list = this.map[name]
-  if (!list) {
-    list = []
-    this.map[name] = list
-  }
-  list.push(value)
+  var oldValue = this.map[name]
+  this.map[name] = oldValue ? oldValue+','+value : value
 }
 
 Headers.prototype['delete'] = function(name) {
@@ -101,12 +100,8 @@ Headers.prototype['delete'] = function(name) {
 }
 
 Headers.prototype.get = function(name) {
-  var values = this.map[normalizeName(name)]
-  return values ? values[0] : null
-}
-
-Headers.prototype.getAll = function(name) {
-  return this.map[normalizeName(name)] || []
+  name = normalizeName(name)
+  return this.has(name) ? this.map[name] : null
 }
 
 Headers.prototype.has = function(name) {
@@ -114,15 +109,15 @@ Headers.prototype.has = function(name) {
 }
 
 Headers.prototype.set = function(name, value) {
-  this.map[normalizeName(name)] = [normalizeValue(value)]
+  this.map[normalizeName(name)] = normalizeValue(value)
 }
 
 Headers.prototype.forEach = function(callback, thisArg) {
-  Object.getOwnPropertyNames(this.map).forEach(function(name) {
-    this.map[name].forEach(function(value) {
-      callback.call(thisArg, value, name, this)
-    }, this)
-  }, this)
+  for (var name in this.map) {
+    if (this.map.hasOwnProperty(name)) {
+      callback.call(thisArg, this.map[name], name, this)
+    }
+  }
 }
 
 Headers.prototype.keys = function() {
@@ -306,9 +301,7 @@ function Request(input, options) {
   options = options || {}
   var body = options.body
 
-  if (typeof input === 'string') {
-    this.url = input
-  } else {
+  if (input instanceof Request) {
     if (input.bodyUsed) {
       throw new TypeError('Already read')
     }
@@ -323,6 +316,8 @@ function Request(input, options) {
       body = input._bodyInit
       input.bodyUsed = true
     }
+  } else {
+    this.url = String(input)
   }
 
   this.credentials = options.credentials || this.credentials || 'omit'
@@ -358,7 +353,10 @@ function decode(body) {
 
 function parseHeaders(rawHeaders) {
   var headers = new Headers()
-  rawHeaders.split('\r\n').forEach(function(line) {
+  // Replace instances of \r\n and \n followed by at least one space or horizontal tab with a space
+  // https://tools.ietf.org/html/rfc7230#section-3.2
+  var preProcessedHeaders = rawHeaders.replace(/\r?\n[\t ]+/g, ' ')
+  preProcessedHeaders.split(/\r?\n/).forEach(function(line) {
     var parts = line.split(':')
     var key = parts.shift().trim()
     if (key) {
@@ -377,7 +375,7 @@ function Response(bodyInit, options) {
   }
 
   this.type = 'default'
-  this.status = 'status' in options ? options.status : 200
+  this.status = options.status === undefined ? 200 : options.status
   this.ok = this.status >= 200 && this.status < 300
   this.statusText = 'statusText' in options ? options.statusText : 'OK'
   this.headers = new Headers(options.headers)
@@ -440,6 +438,8 @@ function rnfetch (input, init) {
 
     if (request.credentials === 'include') {
       xhr.withCredentials = true
+    } else if (request.credentials === 'omit') {
+      xhr.withCredentials = false
     }
 
     if ('responseType' in xhr) {
